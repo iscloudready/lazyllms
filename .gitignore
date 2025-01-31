@@ -1,0 +1,23 @@
+# Ignore Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+
+# Ignore Virtual Environment
+lazyllms_venv/
+venv/
+
+# Ignore IDE and Editor files
+.vscode/
+.idea/
+*.sublime-workspace
+
+# Ignore system-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore environment variables or secrets
+.env
+config.yaml

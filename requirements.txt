@@ -1,0 +1,7 @@
+rich
+textual
+requests
+psutil
+pynvml
+pyyaml
+argparse
