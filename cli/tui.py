@@ -1,5 +1,5 @@
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, Grid
 from textual.widgets import Header, Footer, Static, DataTable, Log
 from textual.binding import Binding
 from textual.timer import Timer
@@ -11,17 +11,15 @@ from core.ollama_api import get_running_models, get_model_logs
 from core.monitor import get_system_usage
 
 class ModelsPanel(Static):
-    """Left panel showing model list"""
-
     def compose(self) -> ComposeResult:
-        yield Static("📦 Models", classes="panel-title")
+        yield Static("📦 Available Models", classes="panel-title")
         yield DataTable()
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
-        table.add_columns("Model", "Parameters", "Size", "Status")
+        table.add_columns("Model", "Parameters", "Size", "Type", "Status")
         self.update_models()
 
     def update_models(self) -> None:
@@ -34,26 +32,51 @@ class ModelsPanel(Static):
                 size_gb = model['size'] / 1024 / 1024 / 1024
                 details = model.get('details', {})
                 param_size = details.get('parameter_size', 'N/A')
-                family = details.get('family', '')
-                quant = details.get('quantization_level', '')
+                quant = details.get('quantization_level', 'N/A')
+                family = details.get('family', 'unknown')
 
-                name = Text(model['name'], style="bright_green")
-                params = Text(f"{param_size} ({quant})", style="bright_yellow")
-                size = Text(f"{size_gb:.1f}GB", style="cyan")
-                status = Text("✓ Running", style="green")
-
-                table.add_row(name, params, size, status)
+                table.add_row(
+                    Text(model['name'], style="bright_green"),
+                    Text(param_size, style="bright_yellow"),
+                    Text(f"{size_gb:.1f}GB", style="cyan"),
+                    Text(f"{family} ({quant})", style="magenta"),
+                    Text("✓ Running", style="green")
+                )
         else:
             table.add_row(
                 Text("No models", style="red"),
                 Text("-", style="red"),
                 Text("-", style="red"),
+                Text("-", style="red"),
                 Text("❌ Not running", style="red")
             )
 
-class SystemPanel(Static):
-    """Right panel showing system metrics"""
+class PerformancePanel(Static):
+    def compose(self) -> ComposeResult:
+        yield Static("⚡ Performance Stats", classes="panel-title")
+        yield DataTable()
 
+    def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        table.zebra_stripes = True
+        table.add_columns("Model", "Req/s", "Latency", "Memory")
+        self.update_metrics()
+
+    def update_metrics(self) -> None:
+        models = get_running_models()
+        table = self.query_one(DataTable)
+        table.clear()
+
+        if models:
+            for model in models:
+                table.add_row(
+                    Text(model['name'], style="bright_green"),
+                    Text("10/s", style="yellow"),  # Example metrics
+                    Text("150ms", style="cyan"),
+                    Text("2.1GB", style="magenta")
+                )
+
+class SystemPanel(Static):
     def compose(self) -> ComposeResult:
         yield Static("🖥️ System Resources", classes="panel-title")
         yield DataTable()
@@ -79,7 +102,6 @@ class SystemPanel(Static):
 
         for resource in ["CPU", "RAM", "GPU"]:
             value = float(usage[resource].strip("%"))
-            # Update peak values
             self._peak_values[resource] = max(self._peak_values[resource], value)
             icon, style = get_status_style(value)
 
@@ -90,7 +112,6 @@ class SystemPanel(Static):
                 Text(icon, style=style)
             )
 
-        # VRAM Usage
         table.add_row(
             Text("VRAM", style="blue"),
             Text(usage["VRAM"], style="cyan"),
@@ -99,11 +120,9 @@ class SystemPanel(Static):
         )
 
 class LogPanel(Static):
-    """Bottom panel showing logs"""
-
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("📝 Model Logs", classes="panel-title")
+            yield Static("📝 Live Model Logs", classes="panel-title")
             yield Static("Press Enter to view selected model logs", classes="log-help")
             yield Log()
 
@@ -112,7 +131,6 @@ class LogPanel(Static):
         self.update_logs()
 
     def clear_logs(self) -> None:
-        """Clear the log widget"""
         log_widget = self.query_one(Log)
         log_widget.clear()
 
@@ -135,12 +153,10 @@ class LogPanel(Static):
                 log_widget.write("[dim]Select a model to view logs...[/]")
 
 class LazyLLMsApp(App):
-    """LazyLLMs TUI Application"""
-
     CSS = """
     Screen {
         layout: grid;
-        grid-size: 2 2;
+        grid-size: 2 3;
         grid-gutter: 1 1;
         padding: 1;
     }
@@ -163,12 +179,17 @@ class LazyLLMsApp(App):
     }
 
     ModelsPanel {
-        row-span: 2;
+        column-span: 2;
         height: 100%;
         border: round $primary;
     }
 
     SystemPanel {
+        height: 100%;
+        border: round $primary;
+    }
+
+    PerformancePanel {
         height: 100%;
         border: round $primary;
     }
@@ -208,6 +229,7 @@ class LazyLLMsApp(App):
         yield Header()
         yield ModelsPanel()
         yield SystemPanel()
+        yield PerformancePanel()
         yield LogPanel()
         yield Footer()
 
@@ -219,9 +241,9 @@ class LazyLLMsApp(App):
         self.refresh_timer = self.set_interval(refresh_interval, self.refresh_data)
 
     def refresh_data(self) -> None:
-        """Refresh all panels"""
         self.query_one(ModelsPanel).update_models()
         self.query_one(SystemPanel).update_metrics()
+        self.query_one(PerformancePanel).update_metrics()
         if self.query_one(LogPanel).selected_model:
             self.query_one(LogPanel).update_logs()
 
@@ -229,21 +251,18 @@ class LazyLLMsApp(App):
         self.refresh_data()
 
     def action_clear_logs(self) -> None:
-        """Clear the log panel"""
         self.query_one(LogPanel).clear_logs()
 
     def action_select_model(self) -> None:
-        """Select model for logs"""
         models_table = self.query_one(ModelsPanel).query_one(DataTable)
         if models_table.cursor_row is not None:
             model_name = models_table.get_cell_at(models_table.cursor_row, 0)
             log_panel = self.query_one(LogPanel)
             log_panel.selected_model = str(model_name)
-            log_panel.clear_logs()  # Clear existing logs
-            log_panel.update_logs()  # Show new logs
+            log_panel.clear_logs()
+            log_panel.update_logs()
 
 def show_tui():
-    """Launch the TUI application"""
     app = LazyLLMsApp()
     app.run()
 
