@@ -1,127 +1,198 @@
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, TabbedContent, TabPane, Static, DataTable, Log
+from textual.widgets import Header, Footer, Static, DataTable, Log
 from textual.binding import Binding
 from textual.timer import Timer
+from rich.text import Text
 import yaml
+import time
 
-from core.ollama_api import get_running_models
+from core.ollama_api import get_running_models, get_model_logs
 from core.monitor import get_system_usage
 
-class ModelsWidget(Static):
-    """Widget to display running models"""
+class ModelsPanel(Static):
+    """Left panel showing model list"""
 
     def compose(self) -> ComposeResult:
+        yield Static("📦 Models", classes="panel-title")
         yield DataTable()
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
-        table.add_columns("Model Name", "Version", "Status")
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.add_columns("Model Name", "Size", "Status")
         self.update_models()
 
     def update_models(self) -> None:
-        """Update running models data"""
         models = get_running_models()
         table = self.query_one(DataTable)
         table.clear()
 
         if models:
             for model in models:
-                table.add_row(
-                    f"[green]{model['name']}[/]",
-                    f"[yellow]{model['digest'][:12]}...[/]",
-                    f"[green]✅ Running[/]"
-                )
+                # Convert size to GB
+                size_gb = model['size'] / 1024 / 1024 / 1024
+                details = model.get('details', {})
+                param_size = details.get('parameter_size', 'N/A')
+                quant = details.get('quantization_level', 'N/A')
+
+                name = Text(model['name'], style="bright_green")
+                size = Text(f"{size_gb:.1f}GB", style="bright_yellow")
+                status = Text("✓ Running", style="green")
+
+                table.add_row(name, size, status)
         else:
             table.add_row(
-                "[red]No models[/]",
-                "[red]-[/]",
-                "[red]❌ Not running[/]"
+                Text("No models", style="red"),
+                Text("-", style="red"),
+                Text("❌ Not running", style="red")
             )
 
-class SystemUsageWidget(Static):
-    """Widget to display system resource usage with color coding"""
+class SystemPanel(Static):
+    """Right panel showing system metrics"""
 
     def compose(self) -> ComposeResult:
+        yield Static("🖥️ System Resources", classes="panel-title")
         yield DataTable()
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
+        table.zebra_stripes = True
         table.add_columns("Resource", "Usage", "Status")
-        self.update_usage()
+        self.update_metrics()
 
-    def get_usage_style(self, value: float) -> str:
-        """Return style based on usage thresholds"""
-        if value < 50:
-            return "green"
-        elif value < 80:
-            return "yellow"
-        return "red"
-
-    def update_usage(self) -> None:
-        """Update system usage data with color coding"""
+    def update_metrics(self) -> None:
         usage = get_system_usage()
         table = self.query_one(DataTable)
         table.clear()
 
-        # Convert percentage strings to floats for comparison
+        def get_status_style(value: float) -> tuple[str, str]:
+            if value < 50:
+                return "✓", "green"
+            elif value < 80:
+                return "⚠", "yellow"
+            return "⛔", "red"
+
+        # CPU Usage
         cpu_value = float(usage["CPU"].strip("%"))
+        cpu_icon, cpu_style = get_status_style(cpu_value)
+        table.add_row(
+            Text("CPU", style="blue"),
+            Text(usage["CPU"], style=cpu_style),
+            Text(cpu_icon, style=cpu_style)
+        )
+
+        # RAM Usage
         ram_value = float(usage["RAM"].strip("%"))
+        ram_icon, ram_style = get_status_style(ram_value)
+        table.add_row(
+            Text("RAM", style="blue"),
+            Text(usage["RAM"], style=ram_style),
+            Text(ram_icon, style=ram_style)
+        )
+
+        # GPU Usage
         gpu_value = float(usage["GPU"].strip("%"))
+        gpu_icon, gpu_style = get_status_style(gpu_value)
+        table.add_row(
+            Text("GPU", style="blue"),
+            Text(usage["GPU"], style=gpu_style),
+            Text(gpu_icon, style=gpu_style)
+        )
 
-        def get_color_tag(value: float) -> str:
-            return "[green]" if value < 50 else "[yellow]" if value < 80 else "[red]"
+        # VRAM Usage
+        table.add_row(
+            Text("VRAM", style="blue"),
+            Text(usage["VRAM"], style="cyan"),
+            Text("ℹ️", style="cyan")
+        )
 
-        def get_status_icon(value: float) -> str:
-            return "🟢" if value < 50 else "🟡" if value < 80 else "🔴"
+class LogPanel(Static):
+    """Bottom panel showing logs"""
 
-        table.add_row(
-            "CPU",
-            f"{get_color_tag(cpu_value)}{usage['CPU']}[/]",
-            f"{get_color_tag(cpu_value)}{get_status_icon(cpu_value)}[/]"
-        )
-        table.add_row(
-            "RAM",
-            f"{get_color_tag(ram_value)}{usage['RAM']}[/]",
-            f"{get_color_tag(ram_value)}{get_status_icon(ram_value)}[/]"
-        )
-        table.add_row(
-            "GPU",
-            f"{get_color_tag(gpu_value)}{usage['GPU']}[/]",
-            f"{get_color_tag(gpu_value)}{get_status_icon(gpu_value)}[/]"
-        )
-        table.add_row(
-            "VRAM",
-            f"[blue]{usage['VRAM']}[/]",
-            "[blue]ℹ️[/]"
-        )
+    def compose(self) -> ComposeResult:
+        yield Static("📝 Model Logs", classes="panel-title")
+        yield Log()
+
+    def on_mount(self) -> None:
+        self.selected_model = None
+        self.update_logs()
+
+    def update_logs(self) -> None:
+        log = self.query_one(Log)
+
+        if self.selected_model:
+            logs = get_model_logs(self.selected_model)
+            timestamp = time.strftime("%H:%M:%S")
+
+            for entry in logs:
+                if "ERROR" in entry:
+                    log.write(f"[{timestamp}] [red]{entry}[/]")
+                elif "WARNING" in entry:
+                    log.write(f"[{timestamp}] [yellow]{entry}[/]")
+                else:
+                    log.write(f"[{timestamp}] [green]{entry}[/]")
+        else:
+            if log.line_count == 0:  # Only write if log is empty
+                log.write("[dim]Select a model to view logs...[/]")
 
 class LazyLLMsApp(App):
-    """Main LazyLLMs TUI Application"""
+    """LazyLLMs TUI Application"""
 
-    TITLE = "LazyLLMs - Model Manager"
     CSS = """
     Screen {
-        align: center middle;
+        layout: grid;
+        grid-size: 2 2;
+        grid-gutter: 1 1;
+        padding: 1;
     }
 
-    #models-container {
-        width: 100%;
-        height: auto;
+    .panel-title {
+        dock: top;
+        padding: 1;
+        background: $panel;
+        border-bottom: heavy $primary;
+        color: $text;
+        text-align: center;
+        text-style: bold;
+    }
+
+    ModelsPanel {
+        row-span: 2;
+        height: 100%;
+        border: round $primary;
+    }
+
+    SystemPanel {
+        height: 100%;
+        border: round $primary;
+    }
+
+    LogPanel {
+        column-span: 2;
+        height: 100%;
+        border: round $primary;
     }
 
     DataTable {
-        width: 100%;
-        height: auto;
+        height: 100%;
+        align: center top;
+    }
+
+    Log {
+        height: 100%;
+        border: none;
+        background: $surface;
+        color: $text;
     }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
-        Binding("l", "toggle_logs", "Toggle Logs"),
-        Binding("tab", "next_tab", "Next Tab"),
-        Binding("shift+tab", "prev_tab", "Previous Tab"),
+        Binding("f", "focus_next", "Focus Next"),
+        Binding("enter", "select_model", "Select Model"),
     ]
 
     def __init__(self):
@@ -129,35 +200,13 @@ class LazyLLMsApp(App):
         self.refresh_timer = None
 
     def compose(self) -> ComposeResult:
-        """Create app layout"""
-        yield Header(show_clock=True)
-
-        with TabbedContent():
-            with TabPane("Overview", id="overview"):
-                with Container(id="models-container"):
-                    yield ModelsWidget()
-                    yield SystemUsageWidget()
-
-            with TabPane("System", id="system"):
-                from cli.widgets.metrics import SystemMetricsWidget
-                from cli.widgets.resources import ResourceAllocationWidget
-
-                with Horizontal():
-                    yield SystemMetricsWidget()
-                    yield ResourceAllocationWidget()
-
-            with TabPane("Queue", id="queue"):
-                from cli.widgets.queue import QueueStatusWidget
-                yield QueueStatusWidget()
-
-            with TabPane("Logs", id="logs"):
-                from cli.widgets.logs import ModelLogsWidget
-                yield ModelLogsWidget()
-
+        yield Header()
+        yield ModelsPanel()
+        yield SystemPanel()
+        yield LogPanel()
         yield Footer()
 
     def on_mount(self) -> None:
-        """Set up auto-refresh timer"""
         with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
             refresh_interval = config["monitoring"]["refresh_interval"]
@@ -165,23 +214,22 @@ class LazyLLMsApp(App):
         self.refresh_timer = self.set_interval(refresh_interval, self.refresh_data)
 
     def refresh_data(self) -> None:
-        """Refresh all data in the UI"""
-        self.query_one(ModelsWidget).update_models()
-        self.query_one(SystemUsageWidget).update_usage()
-
-        # Refresh other widgets if they're visible
-        current_tab = self.query_one(TabbedContent).active
-        if current_tab == "system":
-            self.query_one("#system SystemMetricsWidget").update_metrics()
-            self.query_one("#system ResourceAllocationWidget").update_resources()
-        elif current_tab == "queue":
-            self.query_one("#queue QueueStatusWidget").update_queue()
-        elif current_tab == "logs":
-            self.query_one("#logs ModelLogsWidget").update_logs()
+        """Refresh all panels"""
+        self.query_one(ModelsPanel).update_models()
+        self.query_one(SystemPanel).update_metrics()
+        self.query_one(LogPanel).update_logs()
 
     def action_refresh(self) -> None:
-        """Manual refresh action"""
         self.refresh_data()
+
+    def action_select_model(self) -> None:
+        """Select model for logs"""
+        models_table = self.query_one(ModelsPanel).query_one(DataTable)
+        if models_table.cursor_row is not None:
+            model_name = models_table.get_cell_at(models_table.cursor_row, 0)
+            log_panel = self.query_one(LogPanel)
+            log_panel.selected_model = str(model_name)
+            log_panel.update_logs()
 
 def show_tui():
     """Launch the TUI application"""
