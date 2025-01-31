@@ -1,6 +1,4 @@
 import argparse
-from cli.commands import list_models
-from cli.tui import show_tui
 import sys
 import os
 
@@ -20,8 +18,10 @@ def main():
     args = parser.parse_args()
 
     if args.command == "list":
+        from cli.commands import list_models
         list_models()
     elif args.command == "tui":
+        from cli.tui import show_tui
         show_tui()
     else:
         parser.print_help()
