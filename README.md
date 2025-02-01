@@ -10,6 +10,8 @@
 
 **LazyLLMs** is a **TUI-based (Terminal UI) Model Manager**, inspired by **LazyDocker**, designed for **monitoring, managing, and interacting** with AI models, specifically **Ollama models**. With LazyLLMs, you can **view real-time system resource usage** and **control running AI models** directly from your terminal. It’s a powerful tool for developers and AI enthusiasts who want a lightweight, efficient way to manage their models without the overhead of graphical interfaces.
 
+![LazyLLMs UI](https://raw.githubusercontent.com/iscloudready/lazyllms/refs/heads/main/Images/home.png)
+
 ### 🔹 Key Highlights:
 - 🔹 **Real-Time Monitoring**: View live stats of running AI models including their performance and system resource usage.
 - 🔹 **Resource Management**: Track critical system resources such as **CPU, RAM, GPU, and VRAM** to ensure optimal model performance.
