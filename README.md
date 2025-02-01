@@ -94,9 +94,3 @@ We welcome contributions! Follow these steps:
 This project is **MIT Licensed**. See the [LICENSE](LICENSE) file for details.
 
 ---
-
-## 💌 Connect with Us
-
-- 📧 **Email**: your-email@example.com
-- 🐦 **Twitter**: [@your-handle](https://twitter.com/)
-- 🌟 **LinkedIn**: [Your Profile](https://linkedin.com/in/)
