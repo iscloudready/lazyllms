@@ -153,25 +153,28 @@ class LazyLLMsApp(App):
         self.set_interval(refresh_interval, self.refresh_data)
 
     def refresh_data(self) -> None:
-        """Refresh all panels with error handling."""
-        try:
-            # Update main panels
-            self.query_one(ModelsPanel).update_models()
-            self.query_one(SystemPanel).update_metrics()
-            self.query_one(PerformancePanel).update_metrics()
-            self.query_one(TimePanel).update_time()
+            """Refresh all panels with error handling."""
+            try:
+                # Get currently selected model before refresh
+                details_panel = self.query_one(ModelDetailsPanel)
+                log_panel = self.query_one(LogPanel)
+                current_model = details_panel.selected_model if details_panel else None
 
-            # Update model-specific panels
-            details_panel = self.query_one(ModelDetailsPanel)
-            log_panel = self.query_one(LogPanel)
+                # Update main panels
+                self.query_one(ModelsPanel).update_models()
+                self.query_one(SystemPanel).update_metrics()
+                self.query_one(PerformancePanel).update_metrics()
+                self.query_one(TimePanel).update_time()
 
-            if details_panel.selected_model:
-                details_panel.update_details()
-            if log_panel.selected_model:
-                log_panel.update_logs()
+                # Update model-specific panels if we have a selection
+                if current_model:
+                    if details_panel:
+                        details_panel.update_details(current_model)
+                    if log_panel:
+                        log_panel.update_logs()
 
-        except Exception as e:
-            self.notify(f"Refresh error: {str(e)}", severity="error")
+            except Exception as e:
+                self.notify(f"Refresh error: {str(e)}", severity="error")
 
     def action_refresh(self) -> None:
         """Manual refresh action."""

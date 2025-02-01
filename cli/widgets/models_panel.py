@@ -1,5 +1,3 @@
-# cli/widgets/models_panel.py
-
 from textual.widgets import Static, DataTable
 from textual.app import ComposeResult
 from rich.text import Text
@@ -17,11 +15,13 @@ class ModelsPanel(Static):
         table.cursor_type = "row"
         table.zebra_stripes = True
         table.add_columns("Model", "Parameters", "Size", "Type", "Status")
+        self._last_selected = None  # Store last selected model
         self.update_models()
 
     def update_models(self) -> None:
         """Update the models list with error handling."""
         table = self.query_one(DataTable)
+        current_cursor = table.cursor_row  # Store current cursor position
         table.clear()
 
         try:
@@ -40,7 +40,10 @@ class ModelsPanel(Static):
             # Sort models by name for consistent display
             models = sorted(models, key=lambda x: x.get('name', ''))
 
-            for model in models:
+            # Track where to restore cursor
+            restore_index = None
+
+            for idx, model in enumerate(models):
                 try:
                     # Extract model details safely
                     size_gb = model.get('size', 0) / 1024 / 1024 / 1024
@@ -49,6 +52,10 @@ class ModelsPanel(Static):
                     quant = details.get('quantization_level', 'N/A')
                     family = details.get('family', 'unknown')
                     name = model.get('name', 'Unknown')
+
+                    # If this is our previously selected model, note the index
+                    if name == self._last_selected:
+                        restore_index = idx
 
                     # Color-code model families
                     family_colors = {
@@ -61,7 +68,6 @@ class ModelsPanel(Static):
                     }
                     family_color = family_colors.get(family.lower(), 'white')
 
-                    # Add row with error handling for each field
                     table.add_row(
                         Text(name, style="bright_green"),
                         Text(str(param_size), style="yellow"),
@@ -70,7 +76,6 @@ class ModelsPanel(Static):
                         Text("✓ Running", style="green")
                     )
                 except Exception as e:
-                    # Handle errors for individual model entries
                     table.add_row(
                         Text(str(model.get('name', 'Error')), style="red"),
                         Text("Error", style="red"),
@@ -79,8 +84,13 @@ class ModelsPanel(Static):
                         Text("⚠ Error", style="red")
                     )
 
+            # Restore cursor position
+            if restore_index is not None:
+                table.move_cursor(row=restore_index)
+            elif current_cursor is not None and current_cursor < len(models):
+                table.move_cursor(row=current_cursor)
+
         except Exception as e:
-            # Handle API or general errors
             table.add_row(
                 Text("Error loading models", style="red"),
                 Text("-", style="red"),
@@ -93,6 +103,13 @@ class ModelsPanel(Static):
 
     def on_data_table_selection_changed(self) -> None:
         """Handle table selection change."""
+        table = self.query_one(DataTable)
+        if table and table.cursor_row is not None:
+            # Store the selected model name
+            model_cell = table.get_row_at(table.cursor_row)[0]
+            if model_cell:
+                self._last_selected = str(model_cell).strip()
+
         if self.app and hasattr(self.app, "action_select_model"):
             self.app.action_select_model()
 
