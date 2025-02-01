@@ -1,4 +1,4 @@
-# 🧫 LazyLLMs - Lightweight LLM Model Manager
+# 🧧 LazyLLMs - Lightweight LLM Model Manager
 
 [![GitHub License](https://img.shields.io/github/license/your-repo/lazyllms)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
@@ -20,17 +20,17 @@
 
 ## 📌 Features
 
-👉 **Monitor Running AI Models**: Get an overview of all active models, their configurations, and resource usage.
+🖐 **Monitor Running AI Models**: Get an overview of all active models, their configurations, and resource usage.
 
-👉 **Track System Resource Usage**: Keep tabs on CPU, RAM, GPU, and VRAM in real time.
+🖐 **Track System Resource Usage**: Keep tabs on CPU, RAM, GPU, and VRAM in real time.
 
-👉 **Start & Stop Models via CLI**: Manage the lifecycle of your AI models effortlessly from the terminal.
+🖐 **Start & Stop Models via CLI**: Manage the lifecycle of your AI models effortlessly from the terminal.
 
-👉 **TUI-Based Interactive Interface**: Utilize a clean, responsive UI for managing models with minimal effort.
+🖐 **TUI-Based Interactive Interface**: Utilize a clean, responsive UI for managing models with minimal effort.
 
-👉 **Performance Metrics**: View detailed performance stats including throughput, latency, and memory usage.
+🖐 **Performance Metrics**: View detailed performance stats including throughput, latency, and memory usage.
 
-👉 **Live Log Monitoring**: Inspect logs in real-time to debug and monitor model behaviors.
+🖐 **Live Log Monitoring**: Inspect logs in real-time to debug and monitor model behaviors.
 
 ---
 
@@ -135,7 +135,7 @@ This project is **MIT Licensed**. See the [LICENSE](LICENSE) file for more detai
 
 ---
 
-## 💌 Connect with Us
+## 📨 Connect with Us
 
 📧 **Email**: email@example.com
 
