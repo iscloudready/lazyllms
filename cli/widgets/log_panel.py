@@ -43,7 +43,7 @@ class LogPanel(Static):
             if hasattr(self, 'app'):
                 self.app.notify(f"Error clearing logs: {str(e)}", severity="error")
 
-    def update_logs(self) -> None:
+    def _update_logs(self) -> None:
         """Update logs with rate limiting and error handling."""
         try:
             # Rate limit updates
@@ -102,6 +102,54 @@ class LogPanel(Static):
                 log_widget.write(f"[red bold][{timestamp}] ❌ Error fetching logs: {str(e)}[/]")
                 if hasattr(self, 'app'):
                     self.app.notify(f"Error fetching logs: {str(e)}", severity="error")
+
+        except Exception as e:
+            if hasattr(self, 'app'):
+                self.app.notify(f"Error updating logs: {str(e)}", severity="error")
+
+    def update_logs(self) -> None:
+        """Update logs with better performance."""
+        try:
+            current_time = time.time()
+            if current_time - self._last_update < 0.5:  # Reduced from 1s to 0.5s
+                return
+
+            log_widget = self.query_one(Log)
+            if not log_widget:
+                return
+
+            if not self._selected_model:
+                if log_widget.line_count == 0:
+                    log_widget.write("[dim]Select a model to view logs...[/]")
+                return
+
+            logs = get_model_logs(self._selected_model)
+            timestamp = time.strftime("%H:%M:%S")
+
+            # Buffer logs to reduce writes
+            new_logs = []
+            for entry in logs:
+                if entry in self._log_history:
+                    continue
+
+                if "ERROR" in entry:
+                    style = "red"
+                    prefix = "❌"
+                elif "WARNING" in entry:
+                    style = "yellow"
+                    prefix = "⚠️"
+                else:
+                    style = "green"
+                    prefix = "ℹ️"
+
+                new_logs.append(f"[{timestamp}] {prefix} [{style}]{entry}[/]")
+                self._log_history.add(entry)
+
+            if new_logs:
+                log_widget.write("\n".join(new_logs))
+                log_widget.scroll_end(animate=False)
+
+            self._last_update = current_time
 
         except Exception as e:
             if hasattr(self, 'app'):

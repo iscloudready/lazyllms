@@ -32,7 +32,7 @@ class SystemPanel(Static):
             return f"{size_mb/1024:.1f}GB"
         return f"{size_mb:.0f}MB"
 
-    def update_metrics(self) -> None:
+    def _update_metrics(self) -> None:
         """Update system metrics with error handling."""
         table = self.query_one(DataTable)
         table.clear()
@@ -91,3 +91,53 @@ class SystemPanel(Static):
             )
             if hasattr(self, 'app'):
                 self.app.notify(f"Error updating system metrics: {str(e)}", severity="error")
+
+    def update_metrics(self) -> None:
+        """Update system metrics with error handling."""
+        try:
+            usage = get_system_usage()
+            table = self.query_one(DataTable)
+            table.clear()
+
+            # Basic resources
+            self._add_resource_row(table, "CPU", usage.get("CPU", "N/A"))
+            self._add_resource_row(table, "RAM", usage.get("RAM", "N/A"))
+
+            # Handle multiple GPUs
+            gpu_count = usage.get("gpu_count", 1)
+            for i in range(gpu_count):
+                gpu_key = f"GPU{i}" if i > 0 else "GPU"
+                gpu_usage = usage.get(f"{gpu_key}_util", "N/A")
+                gpu_mem = usage.get(f"{gpu_key}_mem", "N/A")
+                gpu_name = usage.get(f"{gpu_key}_name", f"GPU {i}")
+
+                self._add_resource_row(table, f"{gpu_name}", gpu_usage)
+                self._add_resource_row(table, f"{gpu_name} Memory", gpu_mem)
+
+        except Exception as e:
+            self.notify(f"Error updating metrics: {str(e)}", severity="error")
+
+    def _add_resource_row(self, table, resource, value):
+        """Add a resource row with formatting."""
+        try:
+            if isinstance(value, str):
+                value = value.strip("%")
+            value_float = float(value)
+            peak = self._peak_values.get(resource, 0)
+            self._peak_values[resource] = max(peak, value_float)
+
+            status, style = self._get_status(value_float)
+
+            table.add_row(
+                Text(resource, style="blue"),
+                Text(f"{value_float:.1f}%", style=style),
+                Text(f"{self._peak_values[resource]:.1f}%", style="bright_magenta"),
+                Text(status, style=style)
+            )
+        except (ValueError, TypeError):
+            table.add_row(
+                Text(resource, style="blue"),
+                Text(str(value), style="yellow"),
+                Text("-", style="dim"),
+                Text("N/A", style="dim")
+            )
