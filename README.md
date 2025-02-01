@@ -64,7 +64,7 @@ python main.py tui
 ## 📌 Screenshots
 
 ### **📊 Model & System Usage View**
-![LazyLLMs UI](https://your-image-url.com)
+![LazyLLMs UI](https://raw.githubusercontent.com/iscloudready/lazyllms/refs/heads/main/Images/home.png)
 
 ---
 
