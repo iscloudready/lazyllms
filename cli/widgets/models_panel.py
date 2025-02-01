@@ -18,39 +18,73 @@ class ModelsPanel(Static):
         self.update_models()
 
     def update_models(self) -> None:
-        models = get_running_models()
+        """Update the models list with error handling."""
         table = self.query_one(DataTable)
         table.clear()
 
-        if models:
-            for model in models:
-                size_gb = model['size'] / 1024 / 1024 / 1024
-                details = model.get('details', {})
-                param_size = details.get('parameter_size', 'N/A')
-                quant = details.get('quantization_level', 'N/A')
-                family = details.get('family', 'unknown')
+        try:
+            models = get_running_models()
 
-                # Color-code model families
-                family_colors = {
-                    'llama': 'red',
-                    'gemma2': 'bright_blue',
-                    'qwen2': 'green',
-                    'mistral': 'magenta'
-                }
-                family_color = family_colors.get(family, 'white')
-
+            if not models:
                 table.add_row(
-                    Text(model['name'], style="bright_green"),
-                    Text(param_size, style="yellow"),
-                    Text(f"{size_gb:.1f}GB", style="cyan"),
-                    Text(f"{family} ({quant})", style=family_color),
-                    Text("✓ Running", style="green")
+                    Text("No models", style="red"),
+                    Text("-", style="red"),
+                    Text("-", style="red"),
+                    Text("-", style="red"),
+                    Text("❌ Not running", style="red")
                 )
-        else:
+                return
+
+            # Sort models by name for consistent display
+            models = sorted(models, key=lambda x: x.get('name', ''))
+
+            for model in models:
+                try:
+                    # Extract model details safely
+                    size_gb = model.get('size', 0) / 1024 / 1024 / 1024
+                    details = model.get('details', {})
+                    param_size = details.get('parameter_size', 'N/A')
+                    quant = details.get('quantization_level', 'N/A')
+                    family = details.get('family', 'unknown')
+                    name = model.get('name', 'Unknown')
+
+                    # Color-code model families
+                    family_colors = {
+                        'llama': 'red',
+                        'gemma2': 'bright_blue',
+                        'qwen2': 'green',
+                        'mistral': 'magenta',
+                        'phi': 'yellow',
+                        'granite': 'cyan'
+                    }
+                    family_color = family_colors.get(family.lower(), 'white')
+
+                    # Add row with error handling for each field
+                    table.add_row(
+                        Text(name, style="bright_green"),
+                        Text(str(param_size), style="yellow"),
+                        Text(f"{size_gb:.1f}GB", style="cyan"),
+                        Text(f"{family} ({quant})", style=family_color),
+                        Text("✓ Running", style="green")
+                    )
+                except Exception as e:
+                    # Handle errors for individual model entries
+                    table.add_row(
+                        Text(str(model.get('name', 'Error')), style="red"),
+                        Text("Error", style="red"),
+                        Text("Error", style="red"),
+                        Text("Error", style="red"),
+                        Text("⚠ Error", style="red")
+                    )
+
+        except Exception as e:
+            # Handle API or general errors
             table.add_row(
-                Text("No models", style="red"),
+                Text("Error loading models", style="red"),
                 Text("-", style="red"),
                 Text("-", style="red"),
                 Text("-", style="red"),
-                Text("❌ Not running", style="red")
+                Text(f"⚠ {str(e)}", style="red")
             )
+            if hasattr(self, 'app'):
+                self.app.notify(f"Error loading models: {str(e)}", severity="error")
