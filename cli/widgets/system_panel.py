@@ -53,7 +53,7 @@ class SystemPanel(Static):
                         Text(f"{self._peak_values[resource]:.1f}%", style="bright_magenta"),
                         Text(f"{icon} {status}", style=style)
                     )
-                except (ValueError, KeyError) as e:
+                except (ValueError, KeyError):
                     table.add_row(
                         Text(resource, style="blue"),
                         Text("N/A", style="red"),
@@ -82,7 +82,6 @@ class SystemPanel(Static):
                 )
 
         except Exception as e:
-            # Handle complete failure
             table.add_row(
                 Text("Error", style="red"),
                 Text("Failed to get metrics", style="red"),
@@ -126,13 +125,13 @@ class SystemPanel(Static):
             peak = self._peak_values.get(resource, 0)
             self._peak_values[resource] = max(peak, value_float)
 
-            status, style = self._get_status(value_float)
+            icon, style, status = self.get_status_style(value_float)
 
             table.add_row(
                 Text(resource, style="blue"),
                 Text(f"{value_float:.1f}%", style=style),
                 Text(f"{self._peak_values[resource]:.1f}%", style="bright_magenta"),
-                Text(status, style=style)
+                Text(f"{icon} {status}", style=style)
             )
         except (ValueError, TypeError):
             table.add_row(
