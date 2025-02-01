@@ -16,71 +16,112 @@ class ModelDetailsPanel(Static):
         table.zebra_stripes = True
         table.add_columns("Attribute", "Value")
         self.selected_model = None
+        self._last_update = 0
         self.update_details()
 
+    def format_timestamp(self, timestamp_str: str) -> str:
+        """Format timestamp with error handling."""
+        try:
+            # Parse the timestamp and handle timezone
+            ts = time.strptime(timestamp_str.split("+")[0], "%Y-%m-%dT%H:%M:%S")
+            return time.strftime("%Y-%m-%d %H:%M:%S", ts)
+        except (ValueError, AttributeError, IndexError):
+            return timestamp_str
+
+    def format_size(self, size_bytes: int) -> str:
+        """Format size in bytes to appropriate unit."""
+        try:
+            gb_size = size_bytes / (1024 * 1024 * 1024)
+            if gb_size >= 1:
+                return f"{gb_size:.1f}GB"
+            mb_size = size_bytes / (1024 * 1024)
+            return f"{mb_size:.1f}MB"
+        except (TypeError, ZeroDivisionError):
+            return "Unknown"
+
     def update_details(self, model_name: str = None) -> None:
+        """Update model details with comprehensive error handling."""
         table = self.query_one(DataTable)
         table.clear()
 
-        if model_name:
-            self.selected_model = model_name
-            models = get_running_models()
-            model = next((m for m in models if m['name'] == model_name), None)
-
-            if model:
-                details = model.get('details', {})
-                modified_at = model.get('modified_at', '')
-
-                # Parse timestamp and convert to local time
-                try:
-                    timestamp = time.strptime(modified_at.split("+")[0], "%Y-%m-%dT%H:%M:%S")
-                    local_time = time.strftime("%Y-%m-%d %H:%M:%S", timestamp)
-                except:
-                    local_time = modified_at
-
-                # Model details
-                table.add_row(
-                    Text("Model Name", style="blue"),
-                    Text(model['name'], style="bright_green")
-                )
-                table.add_row(
-                    Text("Family", style="blue"),
-                    Text(details.get('family', 'Unknown'), style="yellow")
-                )
-                table.add_row(
-                    Text("Parameters", style="blue"),
-                    Text(details.get('parameter_size', 'Unknown'), style="magenta")
-                )
-                table.add_row(
-                    Text("Format", style="blue"),
-                    Text(details.get('format', 'Unknown'), style="cyan")
-                )
-                table.add_row(
-                    Text("Quantization", style="blue"),
-                    Text(details.get('quantization_level', 'Unknown'), style="green")
-                )
-                table.add_row(
-                    Text("Last Modified", style="blue"),
-                    Text(local_time, style="yellow")
-                )
-                table.add_row(
-                    Text("Size", style="blue"),
-                    Text(f"{model['size'] / 1024 / 1024 / 1024:.1f}GB", style="magenta")
-                )
-
-                # Additional details if available
-                if 'license' in details:
-                    table.add_row(
-                        Text("License", style="blue"),
-                        Text(details['license'], style="cyan")
-                    )
-                if 'languages' in details:
-                    table.add_row(
-                        Text("Languages", style="blue"),
-                        Text(", ".join(details['languages']), style="green")
-                    )
-        else:
+        if not model_name:
             table.add_row(
                 Text("No model selected", style="dim"),
                 Text("-", style="dim")
             )
+            return
+
+        try:
+            # Rate limit updates
+            current_time = time.time()
+            if current_time - self._last_update < 1:
+                return
+
+            self.selected_model = model_name
+            models = get_running_models()
+            model = next((m for m in models if m['name'] == model_name), None)
+
+            if not model:
+                table.add_row(
+                    Text("Error", style="red"),
+                    Text(f"Model '{model_name}' not found", style="red")
+                )
+                return
+
+            # Extract model details safely
+            details = model.get('details', {})
+            modified_at = model.get('modified_at', '')
+
+            # Define attributes with their styling
+            attributes = [
+                ("Model Name", model.get('name', 'Unknown'), "bright_green"),
+                ("Model ID", model.get('digest', 'Unknown')[:12], "bright_yellow"),
+                ("Family", details.get('family', 'Unknown'), "blue"),
+                ("Parameters", details.get('parameter_size', 'Unknown'), "magenta"),
+                ("Format", details.get('format', 'Unknown'), "cyan"),
+                ("Quantization", details.get('quantization_level', 'Unknown'), "green"),
+                ("Size", self.format_size(model.get('size', 0)), "bright_magenta"),
+                ("Last Modified", self.format_timestamp(modified_at), "yellow"),
+            ]
+
+            # Add base attributes
+            for attr, value, style in attributes:
+                table.add_row(
+                    Text(attr, style="blue"),
+                    Text(str(value), style=style)
+                )
+
+            # Add extended attributes if available
+            if 'license' in details:
+                table.add_row(
+                    Text("License", style="blue"),
+                    Text(str(details['license']), style="bright_blue")
+                )
+
+            if 'languages' in details:
+                table.add_row(
+                    Text("Languages", style="blue"),
+                    Text(", ".join(details['languages']), style="bright_cyan")
+                )
+
+            # Add any additional details present in the model
+            extra_details = {k: v for k, v in details.items()
+                           if k not in ['family', 'parameter_size', 'format',
+                                      'quantization_level', 'license', 'languages']}
+
+            for key, value in extra_details.items():
+                if value:  # Only add if value exists
+                    table.add_row(
+                        Text(key.replace('_', ' ').title(), style="blue"),
+                        Text(str(value), style="white")
+                    )
+
+            self._last_update = current_time
+
+        except Exception as e:
+            table.add_row(
+                Text("Error", style="red"),
+                Text(f"Failed to load details: {str(e)}", style="red")
+            )
+            if hasattr(self, 'app'):
+                self.app.notify(f"Error updating model details: {str(e)}", severity="error")

@@ -2,6 +2,7 @@ from textual.widgets import Static, DataTable
 from textual.app import ComposeResult
 from rich.text import Text
 from core.ollama_api import get_running_models
+from textual.events import DataTableEvent
 
 class ModelsPanel(Static):
     """Panel showing available models"""
@@ -88,3 +89,21 @@ class ModelsPanel(Static):
             )
             if hasattr(self, 'app'):
                 self.app.notify(f"Error loading models: {str(e)}", severity="error")
+
+    def on_data_table_row_selected(self, event: DataTableEvent) -> None:
+        """Handle row selection event."""
+        try:
+            if self.app and hasattr(self.app, "action_select_model"):
+                self.app.action_select_model()
+        except Exception as e:
+            if hasattr(self, 'app'):
+                self.app.notify(f"Selection error: {str(e)}", severity="error")
+
+    def on_data_table_row_highlighted(self, event: DataTableEvent) -> None:
+        """Handle row highlight event."""
+        try:
+            if self.app and hasattr(self.app, "action_select_model"):
+                self.app.action_select_model()
+        except Exception as e:
+            if hasattr(self, 'app'):
+                self.app.notify(f"Highlight error: {str(e)}", severity="error")

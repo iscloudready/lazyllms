@@ -198,28 +198,54 @@ class LazyLLMsApp(App):
                 panels[0].focus()
 
     def action_select_model(self) -> None:
-        """Handle model selection."""
-        try:
-            models_table = self.query_one(ModelsPanel).query_one(DataTable)
-            if models_table.cursor_row is not None:
-                model_name = str(models_table.get_cell_at(models_table.cursor_row, 0))
-                model_name = model_name.strip()
+            """Handle model selection with error handling."""
+            try:
+                models_table = self.query_one(ModelsPanel).query_one(DataTable)
+                if not models_table or models_table.row_count == 0:
+                    return
 
-                if model_name and model_name != "No models":
-                    # Update model details
-                    details_panel = self.query_one(ModelDetailsPanel)
-                    details_panel.selected_model = model_name
-                    details_panel.update_details()
+                cursor_row = models_table.cursor_row
+                if cursor_row is None:
+                    return
 
-                    # Update logs
-                    log_panel = self.query_one(LogPanel)
-                    log_panel.selected_model = model_name
-                    log_panel.clear_logs()
-                    log_panel.update_logs()
+                # Get the content from the rendered row
+                row_key = cursor_row
+                try:
+                    # Get model name safely from the first column
+                    model_cell = models_table.get_row_at(row_key)[0]
+                    if not model_cell:
+                        return
 
-                    self.notify(f"📋 Selected: {model_name}")
-        except Exception as e:
-            self.notify(f"❌ Selection error: {str(e)}", severity="error")
+                    model_name = str(model_cell).strip()
+                    if model_name and model_name != "No models":
+                        # Update model details
+                        details_panel = self.query_one(ModelDetailsPanel)
+                        if details_panel:
+                            details_panel.selected_model = model_name
+                            details_panel.update_details(model_name)
+
+                        # Update logs
+                        log_panel = self.query_one(LogPanel)
+                        if log_panel:
+                            log_panel.selected_model = model_name
+                            log_panel.clear_logs()
+                            log_panel.update_logs()
+
+                        self.notify(f"✨ Selected: {model_name}")
+
+                except Exception as e:
+                    self.notify(f"❌ Error accessing table data: {str(e)}", severity="error")
+
+            except Exception as e:
+                self.notify(f"❌ Selection error: {str(e)}", severity="error")
+
+    def on_data_table_row_selected(self) -> None:
+        """Handle row selection in any DataTable."""
+        self.action_select_model()
+
+    def on_data_table_row_highlighted(self) -> None:
+        """Handle row highlight in any DataTable."""
+        self.action_select_model()
 
 def show_tui():
     """Launch the TUI application"""
