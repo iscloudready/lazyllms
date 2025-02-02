@@ -1,3 +1,4 @@
+import time
 from textual.widgets import Static, DataTable
 from textual.app import ComposeResult
 from rich.text import Text
@@ -101,17 +102,29 @@ class ModelsPanel(Static):
             if hasattr(self, 'app'):
                 self.app.notify(f"Error loading models: {str(e)}", severity="error")
 
+    # Add to ModelsPanel class
     def on_data_table_selection_changed(self) -> None:
-        """Handle table selection change."""
+        """Handle table selection change with debouncing."""
         table = self.query_one(DataTable)
+        if not hasattr(self, '_last_selection_time'):
+            self._last_selection_time = 0
+
+        # Debounce selection events
+        current_time = time.time()
+        if current_time - self._last_selection_time < 0.1:  # 100ms debounce
+            return
+
         if table and table.cursor_row is not None:
             # Store the selected model name
-            model_cell = table.get_row_at(table.cursor_row)[0]
-            if model_cell:
-                self._last_selected = str(model_cell).strip()
-
-        if self.app and hasattr(self.app, "action_select_model"):
-            self.app.action_select_model()
+            try:
+                model_cell = table.get_row_at(table.cursor_row)[0]
+                if model_cell:
+                    self._last_selected = str(model_cell).strip()
+                    self._last_selection_time = current_time
+                    if self.app and hasattr(self.app, "action_select_model"):
+                        self.app.action_select_model()
+            except Exception:
+                pass
 
     def on_data_table_highlight_changed(self) -> None:
         """Handle table highlight change."""

@@ -9,6 +9,7 @@ from cli.widgets.performance_panel import PerformancePanel
 from cli.widgets.log_panel import LogPanel
 from cli.widgets.details_panel import ModelDetailsPanel
 from cli.widgets.time_panel import TimePanel
+from cli.widgets.stats_panel import ModelStatsPanel  # Add this import
 
 import yaml
 import time
@@ -35,9 +36,22 @@ class LazyLLMsApp(App):
         height: 1;
     }
 
-    ModelsPanel {
+    .models-row {
         height: 35%;
+        layout: horizontal;
         margin: 1;
+    }
+
+    ModelsPanel {
+        width: 70%;
+        height: 100%;
+        margin-right: 1;
+        border: round $primary;
+    }
+
+    ModelStatsPanel {
+        width: 30%;
+        height: 100%;
         border: round $primary;
     }
 
@@ -106,35 +120,43 @@ class LazyLLMsApp(App):
         background: $surface;
         color: $text;
     }
+
+    .focusable:focus {
+        border: double $accent;
+    }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
-        Binding("f", "focus_next", "Focus Next"),
+        Binding("tab", "focus_next", "Focus Next"),
+        Binding("shift+tab", "focus_previous", "Focus Previous"),
         Binding("c", "clear_logs", "Clear Logs"),
         Binding("enter", "select_model", "Select Model"),
+        Binding("?", "show_help", "Show Help"),
     ]
 
     def compose(self) -> ComposeResult:
-        """Create app layout."""
-        yield Header()
+            """Create app layout."""
+            yield Header()
 
-        # Top section - Models
-        yield ModelsPanel()
+            # Top row - Models and Stats
+            with Container(classes="models-row"):
+                yield ModelsPanel()
+                yield ModelStatsPanel()
 
-        # Middle section - System Resources, Performance, Time
-        with Container(classes="system-row"):
-            yield SystemPanel()
-            yield PerformancePanel()
-            yield TimePanel()
+            # Middle row - System Resources, Performance, Time
+            with Container(classes="system-row"):
+                yield SystemPanel()
+                yield PerformancePanel()
+                yield TimePanel()
 
-        # Bottom section - Model Details and Logs
-        with Container(classes="bottom-row"):
-            yield ModelDetailsPanel()
-            yield LogPanel()
+            # Bottom row - Model Details and Logs
+            with Container(classes="bottom-row"):
+                yield ModelDetailsPanel()
+                yield LogPanel()
 
-        yield Footer()
+            yield Footer()
 
     def on_mount(self) -> None:
         """Initialize app and start refresh timer."""
@@ -153,6 +175,28 @@ class LazyLLMsApp(App):
         self.set_interval(refresh_interval, self.refresh_data)
 
     def refresh_data(self) -> None:
+            """Refresh all panels with error handling."""
+            try:
+                # Update main panels
+                self.query_one(ModelsPanel).update_models()
+                self.query_one(SystemPanel).update_metrics()
+                self.query_one(PerformancePanel).update_metrics()
+                self.query_one(TimePanel).update_time()
+                self.query_one(ModelStatsPanel).update_stats()  # Add this line
+
+                # Update model-specific panels
+                details_panel = self.query_one(ModelDetailsPanel)
+                log_panel = self.query_one(LogPanel)
+
+                if details_panel.selected_model:
+                    details_panel.update_details()
+                if log_panel.selected_model:
+                    log_panel.update_logs()
+
+            except Exception as e:
+                self.notify(f"Refresh error: {str(e)}", severity="error")
+
+    def _refresh_data(self) -> None:
             """Refresh all panels with error handling."""
             try:
                 # Get currently selected model before refresh
@@ -188,17 +232,64 @@ class LazyLLMsApp(App):
 
     def action_focus_next(self) -> None:
         """Cycle focus through panels."""
-        current = self.screen.focused
-        if current:
-            panels = list(self.query(ModelsPanel, SystemPanel,
-                                   PerformancePanel, TimePanel,
-                                   ModelDetailsPanel, LogPanel))
-            try:
-                current_idx = panels.index(current)
-                next_idx = (current_idx + 1) % len(panels)
-                panels[next_idx].focus()
-            except ValueError:
-                panels[0].focus()
+        panels = [
+            self.query_one(ModelsPanel),
+            self.query_one(SystemPanel),
+            self.query_one(PerformancePanel),
+            self.query_one(ModelStatsPanel),  # New panel
+            self.query_one(TimePanel),
+            self.query_one(ModelDetailsPanel),
+            self.query_one(LogPanel)
+        ]
+
+        current = self.focused
+        if current in panels:
+            idx = panels.index(current)
+            next_idx = (idx + 1) % len(panels)
+            panels[next_idx].focus()
+        else:
+            panels[0].focus()
+
+    def action_focus_previous(self) -> None:
+        """Cycle focus through panels in reverse."""
+        panels = [
+            self.query_one(ModelsPanel),
+            self.query_one(SystemPanel),
+            self.query_one(PerformancePanel),
+            self.query_one(ModelStatsPanel),  # New panel
+            self.query_one(TimePanel),
+            self.query_one(ModelDetailsPanel),
+            self.query_one(LogPanel)
+        ]
+
+        current = self.focused
+        if current in panels:
+            idx = panels.index(current)
+            prev_idx = (idx - 1) % len(panels)
+            panels[prev_idx].focus()
+        else:
+            panels[-1].focus()
+
+    def action_clear_logs(self) -> None:
+        """Clear the logs panel."""
+        log_panel = self.query_one(LogPanel)
+        if log_panel:
+            log_panel.clear_logs()
+            self.notify("🧹 Logs cleared", severity="information")
+
+    def action_show_help(self) -> None:
+        """Show help overlay."""
+        help_text = """
+        Keyboard Shortcuts:
+        q       - Quit application
+        r       - Refresh all panels
+        tab     - Focus next panel
+        shift+tab - Focus previous panel
+        c       - Clear logs
+        enter   - Select model
+        ?       - Show this help
+        """
+        self.notify(help_text, severity="information", timeout=10)
 
     def action_select_model(self) -> None:
             """Handle model selection with error handling."""
