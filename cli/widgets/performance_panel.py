@@ -1,11 +1,12 @@
-import psutil
-import requests
+# cli/widgets/performance_panel.py
 from textual.widgets import Static, DataTable
 from textual.app import ComposeResult
 from rich.text import Text
-from core.ollama_api import OLLAMA_API_URL, get_running_models
+from core.metrics import MetricsManager
+from core.ollama_api import get_running_models
+import psutil
+import time
 
-# performance_panel.py
 class PerformancePanel(Static):
     """Panel showing model performance metrics"""
 
@@ -23,8 +24,46 @@ class PerformancePanel(Static):
             "Memory Usage",
             "Load"
         )
-        self._metrics_cache = {}
-        self._last_update = 0
+        self._metrics_manager = MetricsManager()
+
+    def update_metrics(self) -> None:
+        """Update with real metrics."""
+        if not self._metrics_manager.should_update():
+            return
+
+        table = self.query_one(DataTable)
+        table.clear()
+
+        try:
+            models = get_running_models()
+            for model in models:
+                metrics = self._metrics_manager.get_model_metrics(model['name'])
+
+                if metrics:
+                    # Use real metrics
+                    memory_info = metrics.get('memory_info', {})
+                    cpu_percent = metrics.get('cpu_percent', 0)
+
+                    table.add_row(
+                        Text(model['name'], style="bright_green"),
+                        Text(f"{self._estimate_throughput(cpu_percent)} tokens/s", style="yellow"),
+                        Text(f"{self._estimate_latency(cpu_percent)}ms", style="cyan"),
+                        Text(self.format_memory(getattr(memory_info, 'rss', 0)), style="magenta"),
+                        Text(f"{cpu_percent:.1f}%", style="green")
+                    )
+                else:
+                    # Use estimated metrics
+                    model_size = model.get('size', 0)
+                    table.add_row(
+                        Text(model['name'], style="bright_green"),
+                        Text("10 tokens/s", style="yellow"),
+                        Text("150ms", style="cyan"),
+                        Text(self.format_memory(model_size), style="magenta"),
+                        Text("Active", style="green")
+                    )
+
+        except Exception as e:
+            self.app.notify(f"Error updating metrics: {str(e)}", severity="error")
 
     def format_memory(self, size_bytes: int) -> str:
         """Format memory size to appropriate unit."""
@@ -41,39 +80,10 @@ class PerformancePanel(Static):
         except (TypeError, ValueError):
             return "N/A"
 
-    # performance_panel.py - Currently showing static data
-    def update_metrics(self) -> None:
-        """Update with real Ollama metrics."""
-        table = self.query_one(DataTable)
-        table.clear()
+    def _estimate_throughput(self, cpu_percent: float) -> int:
+        """Estimate throughput based on CPU usage."""
+        return max(5, int(20 - (cpu_percent / 10)))
 
-        try:
-            models = get_running_models()
-            for model in models:
-                # Get static metrics since Ollama doesn't expose real-time metrics
-                model_size = model.get('size', 0)
-
-                # Calculate throughput based on model size
-                size_gb = model_size / (1024**3)
-                estimated_throughput = max(5, int(20 - size_gb))  # Larger models = slower throughput
-
-                # Memory usage from model data
-                memory_usage = self.format_memory(model_size)
-
-                # Calculate load based on memory
-                ram = psutil.virtual_memory()
-                load = f"{(model_size / ram.total) * 100:.1f}%"
-
-                table.add_row(
-                    Text(model['name'], style="bright_green"),
-                    Text(f"{estimated_throughput} tokens/s", style="yellow"),
-                    Text("150ms", style="cyan"),  # Default latency
-                    Text(memory_usage, style="magenta"),
-                    Text(load, style="green")
-                )
-
-        except Exception as e:
-            if "Extra data" in str(e):  # Handle the specific JSON parsing error
-                self.app.notify("Using estimated metrics due to API limitations", severity="warning")
-            else:
-                self.app.notify(f"Error updating metrics: {str(e)}", severity="error")
+    def _estimate_latency(self, cpu_percent: float) -> int:
+        """Estimate latency based on CPU usage."""
+        return min(500, int(100 + cpu_percent * 2))

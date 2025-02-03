@@ -59,9 +59,71 @@ def get_running_models() -> List[Dict[str, Any]]:
     max_retries = 3
     retry_delay = 1
 
+    def parse_model_info(model: Dict[str, Any]) -> Dict[str, Any]:
+        """Helper function to parse model information."""
+        name = model['name']
+        parts = name.split(':')
+        base_name = parts[0]
+
+        # Determine model family
+        family_mapping = {
+            'llama': 'llama',
+            'mistral': 'mistral',
+            'gemma': 'gemma',
+            'qwen': 'qwen',
+            'phi': 'phi',
+            'codestral': 'codestral',
+            'deepseek': 'deepseek',
+            'granite': 'granite'
+        }
+
+        # Get family or use base_name if not in mapping
+        family = next((v for k, v in family_mapping.items() if k in base_name.lower()), base_name)
+
+        # Parse parameter size
+        size_mapping = {
+            '70b': '70B',
+            '13b': '13B',
+            '7b': '7B',
+            '3b': '3B'
+        }
+        param_size = next((size for marker, size in size_mapping.items()
+                          if marker in name.lower()), '7B')
+
+        # Determine quantization
+        quant = 'Q4_K_M'  # default
+        if 'q8' in name.lower():
+            quant = 'Q8_0'
+        elif 'q4' in name.lower():
+            quant = 'Q4_K_M'
+        elif 'q5' in name.lower():
+            quant = 'Q5_K_M'
+
+        # Calculate size in GB
+        size_gb = model.get('size', 0) / (1024 ** 3)
+
+        return {
+            'name': model['name'],
+            'digest': model.get('digest', 'unknown')[:12],  # First 12 chars of digest
+            'size': model.get('size', 0),
+            'size_formatted': f"{size_gb:.1f}GB",
+            'details': {
+                'family': family,
+                'parameter_size': param_size,
+                'quantization_level': quant,
+                'format': 'gguf'
+            },
+            'modified_at': model.get('modified_at', ''),
+            'metrics': {
+                'throughput': '10 tokens/s',
+                'latency': '150ms',
+                'memory_usage': f"{size_gb:.1f}GB"
+            },
+            'status': 'Running'
+        }
+
     for attempt in range(max_retries):
         try:
-            # Try to get models from the /tags endpoint
             response = requests.get(
                 f"{OLLAMA_API_URL}/tags",
                 timeout=DEFAULT_TIMEOUT
@@ -70,71 +132,24 @@ def get_running_models() -> List[Dict[str, Any]]:
             models = response.json().get("models", [])
 
             if models:
-                # Process each model without using /show endpoint
-                enhanced_models = []
-                for model in models:
-                    name = model['name']
-                    # Parse model details from name
-                    parts = name.split(':')
-                    base_name = parts[0]
-                    version = parts[1] if len(parts) > 1 else 'latest'
+                return [parse_model_info(model) for model in models]
 
-                    # Parse quantization from model name
-                    quant = 'Q4_K_M'  # default
-                    if 'q4' in name.lower():
-                        quant = 'Q4_K_M'
-                    elif 'q8' in name.lower():
-                        quant = 'Q8_0'
-
-                    # Determine model family
-                    family = base_name
-                    if 'llama' in base_name:
-                        family = 'llama'
-                    elif 'mistral' in base_name:
-                        family = 'mistral'
-                    elif 'gemma' in base_name:
-                        family = 'gemma'
-                    elif 'qwen' in base_name:
-                        family = 'qwen'
-                    elif 'phi' in base_name:
-                        family = 'phi'
-
-                    # Parse parameter size from name or set default
-                    param_size = '7B'
-                    if '70b' in name.lower():
-                        param_size = '70B'
-                    elif '13b' in name.lower():
-                        param_size = '13B'
-                    elif '7b' in name.lower():
-                        param_size = '7B'
-                    elif '3b' in name.lower():
-                        param_size = '3B'
-
-                    enhanced_model = {
-                        'name': model['name'],
-                        'digest': model.get('digest', 'unknown'),
-                        'size': model.get('size', 0),
-                        'details': {
-                            'family': family,
-                            'parameter_size': param_size,
-                            'quantization_level': quant,
-                            'format': 'gguf'
-                        },
-                        'modified_at': model.get('modified_at', ''),
-                        'metrics': {
-                            'throughput': '10 tokens/s',
-                            'latency': '150ms',
-                            'memory_usage': model.get('size', 0)
-                        }
-                    }
-                    enhanced_models.append(enhanced_model)
-                return enhanced_models
+            # If no models found, try alternative endpoint
+            response = requests.get(
+                f"{OLLAMA_API_URL}/list",
+                timeout=DEFAULT_TIMEOUT
+            )
+            if response.ok:
+                models = response.json().get("models", [])
+                if models:
+                    return [parse_model_info(model) for model in models]
 
         except requests.RequestException as e:
+            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch models: {e}")
+                logger.error(f"Failed to fetch models after {max_retries} attempts")
                 return []
-            time.sleep(retry_delay * (attempt + 1))
+            time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
 
     return []
 

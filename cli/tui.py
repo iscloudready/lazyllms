@@ -1,9 +1,20 @@
+# Standard library imports
+import logging
+import platform
+import sys
+import time
+import yaml
+
+# Third-party imports
+import psutil
+from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetName, nvmlDeviceGetMemoryInfo
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, DataTable, Log
-from textual.binding import Binding
-from core.ollama_api import get_running_models
 
+# Local imports
+from core.ollama_api import get_running_models
 from cli.widgets.models_panel import ModelsPanel
 from cli.widgets.system_banner import SystemConfigBanner
 from cli.widgets.system_panel import SystemPanel
@@ -11,15 +22,21 @@ from cli.widgets.performance_panel import PerformancePanel
 from cli.widgets.log_panel import LogPanel
 from cli.widgets.details_panel import ModelDetailsPanel
 from cli.widgets.time_panel import TimePanel
-from cli.widgets.stats_panel import ModelStatsPanel  # Add this import
+from cli.widgets.stats_panel import ModelStatsPanel
 
-import yaml
-import time
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
 
 class LazyLLMsApp(App):
     """LazyLLMs TUI Application"""
     TITLE = "🧧 LazyLLMs - AI Model Manager"
     SUB_TITLE = "Monitor and manage your AI models"
+
+    logger = logging.getLogger("LazyLLMs")
 
     CSS = """
     Screen {
@@ -156,13 +173,14 @@ class LazyLLMsApp(App):
 
     def __init__(self):
         super().__init__()
-        # Initialize cache and update intervals
         self._cache = {
             'models': {},
             'system': {},
             'performance': {},
             'selected_model': None,
-            'last_update': 0
+            'last_update': 0,
+            'models_last_update': 0,
+            'performance_last_update': 0
         }
         self._update_intervals = {
             'system': 2.0,
@@ -170,6 +188,9 @@ class LazyLLMsApp(App):
             'performance': 3.0,
             'details': 1.0
         }
+        self._last_selection_time = 0
+        self._last_selected = None
+        self._initialized = False
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -214,8 +235,7 @@ class LazyLLMsApp(App):
                     if model_name != self._last_selected:
                         self._last_selected = model_name
                         self._last_selection_time = current_time
-                        if self.app:
-                            self.app.action_select_model()
+                        self.action_select_model()  # Direct call instead of self.app
             except Exception:
                 pass
 
@@ -261,85 +281,109 @@ class LazyLLMsApp(App):
             return f"Error getting system info: {str(e)}"
 
     def compose(self) -> ComposeResult:
-            """Create app layout."""
-            yield Header(show_clock=True)
+        """Create app layout."""
+        yield Header(show_clock=True)
+        with SystemConfigBanner():
+            yield Static(self.get_system_info(), id="system-info")
 
-            # Adding SystemConfigBanner with proper styling
-            with SystemConfigBanner():
-                yield Static(self.get_system_info(), id="system-info")
+        with Container(classes="models-row"):
+            yield ModelsPanel()
+            yield ModelStatsPanel()
 
-            # Top row - Models and Stats
-            with Container(classes="models-row"):
-                yield ModelsPanel()
-                yield ModelStatsPanel()
+        with Container(classes="system-row"):
+            yield SystemPanel()
+            yield PerformancePanel()
+            yield TimePanel()
 
-            # Middle row - System Resources, Performance, Time
-            with Container(classes="system-row"):
-                yield SystemPanel()
-                yield PerformancePanel()
-                yield TimePanel()
+        with Container(classes="bottom-row"):
+            yield ModelDetailsPanel()
+            yield LogPanel()
 
-            # Bottom row - Model Details and Logs
-            with Container(classes="bottom-row"):
-                yield ModelDetailsPanel()
-                yield LogPanel()
-
-            yield Footer()
+        yield Footer()
 
     def on_mount(self) -> None:
-        """Initialize app and start refresh timer."""
+        """Progressive initialization of components."""
         try:
-            with open("config.yaml", "r") as f:
-                config = yaml.safe_load(f)
-                refresh_interval = float(config.get("monitoring", {}).get("refresh_interval", 2.0))
+            self.notify("🚀 Starting LazyLLMs...", severity="information")
+
+            # Load configuration first
+            self.logger.info("Loading configuration...")
+            try:
+                with open("config.yaml", "r") as f:
+                    config = yaml.safe_load(f)
+                    refresh_interval = float(config.get("monitoring", {}).get("refresh_interval", 2.0))
+            except Exception as e:
+                self.logger.warning(f"Using default refresh interval (2s): {e}")
+                refresh_interval = 2.0
+
+            # Load essential components first
+            self.notify("📊 Loading components...", severity="information")
+            self.logger.info("Loading essential components...")
+            self.query_one(SystemPanel).update_metrics()
+            self.query_one(ModelsPanel).update_models()
+
+            # Start refresh timer for non-essential updates
+            self.logger.info("Starting refresh timer...")
+            self.set_interval(refresh_interval, self.refresh_data)
+
+            # Initial data load in background
+            self.logger.info("Loading initial data...")
+            self.refresh_data()
+
+            self.logger.info("Initialization complete.")
+            self.notify("✨ Ready!", severity="information")
+
         except Exception as e:
-            self.notify("⚠️ Using default refresh interval (2s)", severity="warning")
-            refresh_interval = 2.0
-
-        # Initial data load
-        self.refresh_data()
-
-        # Start refresh timer
-        self.set_interval(refresh_interval, self.refresh_data)
+            self.logger.error(f"Error during mount: {str(e)}", exc_info=True)
+            self.notify(f"❌ Error during initialization: {str(e)}", severity="error")
 
     def refresh_data(self) -> None:
         """Optimized refresh with caching."""
         current_time = time.time()
 
         try:
-            # Only update system metrics every interval
+            self.logger.debug("Starting refresh cycle...")
+
+            # System metrics update
             if current_time - self._cache['last_update'] > self._update_intervals['system']:
+                self.logger.debug("Updating system metrics...")
                 self.query_one(SystemPanel).update_metrics()
                 self.query_one(TimePanel).update_time()
                 self._cache['last_update'] = current_time
+                self.logger.debug("System metrics updated")
 
-            # Update models only if needed
+            # Models update
             if current_time - self._cache.get('models_last_update', 0) > self._update_intervals['models']:
-                models_panel = self.query_one(ModelsPanel)
-                new_models = get_running_models()
-                if new_models != self._cache.get('models_data'):
-                    self._cache['models_data'] = new_models
-                    models_panel.update_models()
-                    self.query_one(ModelStatsPanel).update_stats()
-                self._cache['models_last_update'] = current_time
+                self.logger.debug("Checking for model updates...")
+                try:
+                    models_panel = self.query_one(ModelsPanel)
+                    new_models = get_running_models()
+                    if new_models != self._cache.get('models_data'):
+                        self.logger.debug(f"Found {len(new_models)} models, updating...")
+                        self._cache['models_data'] = new_models
+                        models_panel.update_models()
+                        self.query_one(ModelStatsPanel).update_stats()
+                    self._cache['models_last_update'] = current_time
+                except Exception as e:
+                    self.logger.error(f"Error updating models: {e}")
+                    raise
 
-            # Update performance metrics
+            # Performance metrics
             if current_time - self._cache.get('performance_last_update', 0) > self._update_intervals['performance']:
+                self.logger.debug("Updating performance metrics...")
                 self.query_one(PerformancePanel).update_metrics()
                 self._cache['performance_last_update'] = current_time
 
+            self.logger.debug("Refresh cycle completed")
+
         except Exception as e:
+            self.logger.error(f"Refresh error: {str(e)}", exc_info=True)
             self.notify(f"Refresh error: {str(e)}", severity="error")
 
     def action_refresh(self) -> None:
         """Manual refresh action."""
         self.refresh_data()
         self.notify("✨ Refreshed", severity="information")
-
-    def action_clear_logs(self) -> None:
-        """Clear the logs panel."""
-        self.query_one(LogPanel).clear_logs()
-        self.notify("🧹 Logs cleared", severity="information")
 
     def action_focus_next(self) -> None:
         """Cycle focus through panels."""
@@ -452,7 +496,103 @@ class LazyLLMsApp(App):
         """Handle row highlight in any DataTable."""
         self.action_select_model()
 
+# cli/tui.py - Simplified show_tui function
 def show_tui():
-    """Launch the TUI application"""
-    app = LazyLLMsApp()
-    app.run()
+    """Launch the TUI application with initialization logging"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        stream=sys.stdout
+    )
+    logger = logging.getLogger("LazyLLMs")
+
+    try:
+        logger.info("Starting LazyLLMs initialization...")
+
+        # Check Ollama connection
+        logger.info("Checking Ollama connection...")
+        try:
+            models = get_running_models()
+            if not models:
+                logger.warning("No models found, but continuing...")
+            logger.info(f"Found {len(models)} running models")
+        except Exception as e:
+            logger.error(f"Error connecting to Ollama: {e}")
+            raise
+
+        # Initialize app
+        logger.info("Initializing application...")
+        app = LazyLLMsApp()
+
+        # Start UI
+        logger.info("Starting UI...")
+        app.run()
+
+    except Exception as e:
+        logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+        raise
+
+def _show_tui():
+    """Launch the TUI application with initialization logging"""
+    import threading
+    from queue import Queue
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        stream=sys.stdout
+    )
+    logger = logging.getLogger("LazyLLMs")
+
+    def run_app(result_queue):
+        try:
+            logger.info("Starting LazyLLMs initialization...")
+
+            # Check Ollama first
+            logger.info("Checking Ollama connection...")
+            try:
+                models = get_running_models()
+                if not models:
+                    logger.warning("No models found, but continuing...")
+                logger.info(f"Found {len(models)} running models")
+            except Exception as e:
+                logger.error(f"Error connecting to Ollama: {e}")
+                result_queue.put(("error", str(e)))
+                return
+
+            # Initialize app
+            logger.info("Initializing application...")
+            app = LazyLLMsApp()
+
+            # Start UI
+            logger.info("Starting UI...")
+            app.run()
+            result_queue.put(("success", None))
+
+        except Exception as e:
+            logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+            result_queue.put(("error", str(e)))
+
+    try:
+        result_queue = Queue()
+        app_thread = threading.Thread(target=run_app, args=(result_queue,))
+        app_thread.daemon = True
+        app_thread.start()
+
+        # Wait for timeout or completion
+        timeout = 30  # 30 seconds timeout
+        app_thread.join(timeout)
+
+        if app_thread.is_alive():
+            logger.error("Application startup timed out")
+            raise TimeoutError("Application startup timed out after 30 seconds")
+
+        # Check for any errors
+        if not result_queue.empty():
+            status, message = result_queue.get()
+            if status == "error":
+                raise Exception(message)
+
+    except Exception as e:
+        logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+        raise
