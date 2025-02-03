@@ -4,6 +4,7 @@ from rich.text import Text
 from core.ollama_api import get_running_models
 import time
 
+# details_panel.py
 class ModelDetailsPanel(Static):
     """Panel showing detailed model information"""
 
@@ -17,12 +18,11 @@ class ModelDetailsPanel(Static):
         table.add_columns("Attribute", "Value")
         self.selected_model = None
         self._last_update = 0
-        self.update_details()
+        self._cache = {}
 
     def format_timestamp(self, timestamp_str: str) -> str:
         """Format timestamp with error handling."""
         try:
-            # Parse the timestamp and handle timezone
             ts = time.strptime(timestamp_str.split("+")[0], "%Y-%m-%dT%H:%M:%S")
             return time.strftime("%Y-%m-%d %H:%M:%S", ts)
         except (ValueError, AttributeError, IndexError):
@@ -40,11 +40,13 @@ class ModelDetailsPanel(Static):
             return "Unknown"
 
     def update_details(self, model_name: str = None) -> None:
-        """Update model details with comprehensive error handling."""
+        """Update model details with caching and error handling."""
         table = self.query_one(DataTable)
-        table.clear()
+        current_time = time.time()
 
+        # Clear table if no model selected
         if not model_name:
+            table.clear()
             table.add_row(
                 Text("No model selected", style="dim"),
                 Text("-", style="dim")
@@ -52,12 +54,16 @@ class ModelDetailsPanel(Static):
             return
 
         try:
-            # Rate limit updates
-            current_time = time.time()
-            if current_time - self._last_update < 1:
+            # Check cache and update interval
+            if (model_name in self._cache and
+                current_time - self._last_update < 2.0 and
+                self.selected_model == model_name):
                 return
 
             self.selected_model = model_name
+            table.clear()
+
+            # Fetch model details
             models = get_running_models()
             model = next((m for m in models if m['name'] == model_name), None)
 
@@ -68,7 +74,7 @@ class ModelDetailsPanel(Static):
                 )
                 return
 
-            # Extract model details safely
+            # Extract and display model details
             details = model.get('details', {})
             modified_at = model.get('modified_at', '')
 
@@ -84,44 +90,31 @@ class ModelDetailsPanel(Static):
                 ("Last Modified", self.format_timestamp(modified_at), "yellow"),
             ]
 
-            # Add base attributes
+            # Add rows to table
             for attr, value, style in attributes:
                 table.add_row(
                     Text(attr, style="blue"),
                     Text(str(value), style=style)
                 )
 
-            # Add extended attributes if available
-            if 'license' in details:
-                table.add_row(
-                    Text("License", style="blue"),
-                    Text(str(details['license']), style="bright_blue")
-                )
-
-            if 'languages' in details:
-                table.add_row(
-                    Text("Languages", style="blue"),
-                    Text(", ".join(details['languages']), style="bright_cyan")
-                )
-
-            # Add any additional details present in the model
-            extra_details = {k: v for k, v in details.items()
-                           if k not in ['family', 'parameter_size', 'format',
-                                      'quantization_level', 'license', 'languages']}
-
-            for key, value in extra_details.items():
-                if value:  # Only add if value exists
-                    table.add_row(
-                        Text(key.replace('_', ' ').title(), style="blue"),
-                        Text(str(value), style="white")
-                    )
-
+            # Cache the results
+            self._cache[model_name] = {
+                'data': model,
+                'timestamp': current_time
+            }
             self._last_update = current_time
 
         except Exception as e:
+            error_msg = f"Failed to load details: {str(e)}"
+            table.clear()
             table.add_row(
                 Text("Error", style="red"),
-                Text(f"Failed to load details: {str(e)}", style="red")
+                Text(error_msg, style="red")
             )
             if hasattr(self, 'app'):
-                self.app.notify(f"Error updating model details: {str(e)}", severity="error")
+                self.app.notify(error_msg, severity="error")
+
+    def clear_cache(self) -> None:
+        """Clear the cache when needed."""
+        self._cache.clear()
+        self._last_update = 0

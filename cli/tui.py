@@ -2,8 +2,10 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, DataTable, Log
 from textual.binding import Binding
+from core.ollama_api import get_running_models
 
 from cli.widgets.models_panel import ModelsPanel
+from cli.widgets.system_banner import SystemConfigBanner
 from cli.widgets.system_panel import SystemPanel
 from cli.widgets.performance_panel import PerformancePanel
 from cli.widgets.log_panel import LogPanel
@@ -16,16 +18,25 @@ import time
 
 class LazyLLMsApp(App):
     """LazyLLMs TUI Application"""
+    TITLE = "🧧 LazyLLMs - AI Model Manager"
+    SUB_TITLE = "Monitor and manage your AI models"
 
     CSS = """
     Screen {
         layout: vertical;
     }
 
-    Header {
+    Header1 {
         dock: top;
         background: $boost;
         color: $text;
+        height: 1;
+    }
+
+    Header {
+        background: $boost;
+        color: $text;
+        text-align: center;
         height: 1;
     }
 
@@ -124,7 +135,41 @@ class LazyLLMsApp(App):
     .focusable:focus {
         border: double $accent;
     }
+
+    SystemConfigBanner {
+        background: $surface;
+        color: $text;
+        height: 1;
+        padding: 0 1;
+        border-bottom: heavy $primary;
+    }
+
+    SystemConfigBanner1 {
+        background: $boost;
+        color: $text;
+        height: 1;
+        dock: top;
+        padding: 0 1;
+        border-bottom: heavy $primary;
+    }
     """
+
+    def __init__(self):
+        super().__init__()
+        # Initialize cache and update intervals
+        self._cache = {
+            'models': {},
+            'system': {},
+            'performance': {},
+            'selected_model': None,
+            'last_update': 0
+        }
+        self._update_intervals = {
+            'system': 2.0,
+            'models': 5.0,
+            'performance': 3.0,
+            'details': 1.0
+        }
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -136,9 +181,92 @@ class LazyLLMsApp(App):
         Binding("?", "show_help", "Show Help"),
     ]
 
+    # Add to tui.py
+    def safe_refresh(self) -> None:
+        """Safe refresh with recovery."""
+        for panel in self.query("Panel"):
+            try:
+                if hasattr(panel, 'update'):
+                    panel.update()
+            except Exception as e:
+                self.notify(f"Panel refresh error: {str(e)}", severity="error")
+                try:
+                    panel.mount()  # Try remounting
+                except:
+                    pass
+
+    # Update in models_panel.py
+    def on_data_table_selection_changed(self) -> None:
+        """Handle table selection with caching."""
+        if not hasattr(self, '_last_selection_time'):
+            self._last_selection_time = 0
+
+        current_time = time.time()
+        if current_time - self._last_selection_time < 0.1:  # Debounce
+            return
+
+        table = self.query_one(DataTable)
+        if table and table.cursor_row is not None:
+            try:
+                model_cell = table.get_row_at(table.cursor_row)[0]
+                if model_cell:
+                    model_name = str(model_cell).strip()
+                    if model_name != self._last_selected:
+                        self._last_selected = model_name
+                        self._last_selection_time = current_time
+                        if self.app:
+                            self.app.action_select_model()
+            except Exception:
+                pass
+
+    # Add this method to LazyLLMsApp class in tui.py
+    def get_system_info(self) -> str:
+        """Get formatted system configuration information."""
+        try:
+            import platform
+            import psutil
+            from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetName, nvmlDeviceGetMemoryInfo
+
+            # CPU Info
+            cpu_count = psutil.cpu_count()
+            cpu_freq = psutil.cpu_freq()
+            if cpu_freq:
+                cpu_info = f"CPU: {cpu_count} cores @ {cpu_freq.max/1000:.1f}GHz"
+            else:
+                cpu_info = f"CPU: {cpu_count} cores"
+
+            # RAM Info
+            ram = psutil.virtual_memory()
+            ram_info = f"RAM: {ram.total / (1024**3):.1f}GB"
+
+            # GPU Info
+            try:
+                nvmlInit()
+                handle = nvmlDeviceGetHandleByIndex(0)
+                gpu_name = nvmlDeviceGetName(handle)
+                gpu_memory = nvmlDeviceGetMemoryInfo(handle)
+                gpu_info = f"GPU: {gpu_name} ({gpu_memory.total / (1024**3):.1f}GB)"
+            except Exception:
+                gpu_info = "GPU: None"
+
+            # OS Info
+            os_info = f"OS: {platform.system()} {platform.release()}"
+
+            # Python Info
+            python_info = f"Python: {platform.python_version()}"
+
+            return f"🖥️ {cpu_info} | 💾 {ram_info} | 🎮 {gpu_info} | 💻 {os_info} | 🐍 {python_info}"
+
+        except Exception as e:
+            return f"Error getting system info: {str(e)}"
+
     def compose(self) -> ComposeResult:
             """Create app layout."""
-            yield Header()
+            yield Header(show_clock=True)
+
+            # Adding SystemConfigBanner with proper styling
+            with SystemConfigBanner():
+                yield Static(self.get_system_info(), id="system-info")
 
             # Top row - Models and Stats
             with Container(classes="models-row"):
@@ -175,50 +303,33 @@ class LazyLLMsApp(App):
         self.set_interval(refresh_interval, self.refresh_data)
 
     def refresh_data(self) -> None:
-            """Refresh all panels with error handling."""
-            try:
-                # Update main panels
-                self.query_one(ModelsPanel).update_models()
+        """Optimized refresh with caching."""
+        current_time = time.time()
+
+        try:
+            # Only update system metrics every interval
+            if current_time - self._cache['last_update'] > self._update_intervals['system']:
                 self.query_one(SystemPanel).update_metrics()
-                self.query_one(PerformancePanel).update_metrics()
                 self.query_one(TimePanel).update_time()
-                self.query_one(ModelStatsPanel).update_stats()  # Add this line
+                self._cache['last_update'] = current_time
 
-                # Update model-specific panels
-                details_panel = self.query_one(ModelDetailsPanel)
-                log_panel = self.query_one(LogPanel)
+            # Update models only if needed
+            if current_time - self._cache.get('models_last_update', 0) > self._update_intervals['models']:
+                models_panel = self.query_one(ModelsPanel)
+                new_models = get_running_models()
+                if new_models != self._cache.get('models_data'):
+                    self._cache['models_data'] = new_models
+                    models_panel.update_models()
+                    self.query_one(ModelStatsPanel).update_stats()
+                self._cache['models_last_update'] = current_time
 
-                if details_panel.selected_model:
-                    details_panel.update_details()
-                if log_panel.selected_model:
-                    log_panel.update_logs()
-
-            except Exception as e:
-                self.notify(f"Refresh error: {str(e)}", severity="error")
-
-    def _refresh_data(self) -> None:
-            """Refresh all panels with error handling."""
-            try:
-                # Get currently selected model before refresh
-                details_panel = self.query_one(ModelDetailsPanel)
-                log_panel = self.query_one(LogPanel)
-                current_model = details_panel.selected_model if details_panel else None
-
-                # Update main panels
-                self.query_one(ModelsPanel).update_models()
-                self.query_one(SystemPanel).update_metrics()
+            # Update performance metrics
+            if current_time - self._cache.get('performance_last_update', 0) > self._update_intervals['performance']:
                 self.query_one(PerformancePanel).update_metrics()
-                self.query_one(TimePanel).update_time()
+                self._cache['performance_last_update'] = current_time
 
-                # Update model-specific panels if we have a selection
-                if current_model:
-                    if details_panel:
-                        details_panel.update_details(current_model)
-                    if log_panel:
-                        log_panel.update_logs()
-
-            except Exception as e:
-                self.notify(f"Refresh error: {str(e)}", severity="error")
+        except Exception as e:
+            self.notify(f"Refresh error: {str(e)}", severity="error")
 
     def action_refresh(self) -> None:
         """Manual refresh action."""
